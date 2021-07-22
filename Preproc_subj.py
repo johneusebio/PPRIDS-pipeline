@@ -1,10 +1,11 @@
 
+import os
+import pathlib
+import shutil
+import preprocessing as pp
+import statistics as stats
+
 class Preproc_subj:
-    import os
-    import pathlib
-    import shutil
-    import preprocessing as pp
-    import statistics as stats
     
     def __init__(self, input, config, step_order):
         # initialize the most current forms of the pp'd data
@@ -39,81 +40,86 @@ class Preproc_subj:
     def create_dirstruct(self):
         dirlist=["func", "motion", "spat_norm", "quality_control", ["anat", "segment"]]
         for dir in dirlist:
-            dir = self.join_list(dir, self.os.path.sep)
-            self.pathlib.Path(self.os.path.join(self.out, dir)).mkdir(parents=True, exist_ok=True)
+            dir = self.join_list(dir, os.path.sep)
+            pathlib.Path(os.path.join(self.out, dir)).mkdir(parents=True, exist_ok=True)
         return
         
     def dir_ls(self):
         return {
-            "anat"   : self.os.path.join(self.out, "anat"),
-            "func"   : self.os.path.join(self.out, "func"),
-            "motion" : self.os.path.join(self.out, "motion"),
-            "norm"   : self.os.path.join(self.out, "spat_norm"),
-            "qc"     : self.os.path.join(self.out, "quality_control"),
-            "segment": self.os.path.join(self.out, "anat", "segment")
+            "anat"   : os.path.join(self.out, "anat"),
+            "func"   : os.path.join(self.out, "func"),
+            "motion" : os.path.join(self.out, "motion"),
+            "norm"   : os.path.join(self.out, "spat_norm"),
+            "qc"     : os.path.join(self.out, "quality_control"),
+            "segment": os.path.join(self.out, "anat", "segment")
         }
         
     def step__next(self):
         current_key = self.step__current()
         current_val = self.step_order[current_key]
         
-        next_val = current_val+1
-        next_ind = list(self.step_order.values()).index(next_val)
-        return list(self.step_order.keys())[next_ind]
+        return self.get_key(current_val+1, self.step_order)
         
     def step__previous(self):
         current_key = self.step__current()
         current_val = self.step_order[current_key]
         
-        next_val = current_val-1
-        next_ind = list(self.step_order.values()).index(next_val)
-        return list(self.step_order.keys())[next_ind]
+        return self.get_key(current_val-1, self.step_order)
         
     def step__current(self):
+
         done_keys = self.steps.keys()
         done_values = [self.step_order[X] for X in done_keys]
         
-        cur_ind = done_values.index(max(done_values))
-        return done_keys[cur_ind]
+        return self.get_key(max(done_values), self.step_order)
     
     def step__last(self):
         last_val = max(self.step_order.values())
-        last_ind = list(self.step_order.keys()).index(last_val)
-        return list(self.step_order.keys())[last_ind]
+        return self.get_key(last_val, self.step_order)
+    
+    def get_key(self, val, my_dict):
+        for key, value in my_dict.items():
+            if val == value:
+                return key
+        raise Exception("Key does not exist.")
     
     def join_list(self, ls, delim="/"):
-        if len(ls) > 1:
+        if isinstance(ls, list):
             return delim.join(ls)
         return ls
     
-    def csf_tcourse(self):
-        csf_mask = self.pp.segment(self.anat, self.dirs["segment"])
-        csf_mask = self.pp.bin_mask(csf_mask, 0.75)
+    def calc_csf_tcourse(self):
+        csf_mask = pp.segment(self.anat, self.dirs["segment"])
+        # csf_mask = os.path.join(csf_mask, "seg_pve_0.nii.gz")
+        csf_mask = pp.bin_mask(csf_mask, 0.75)
 
-        return self.pp.roi_tcourse(
+        return pp.roi_tcourse(
             self.func,
             csf_mask,
-            self.os.path.join(self.dirs["motion"], "global_signal.1D"),
+            os.path.join(self.dirs["motion"], "global_signal.1D"),
         )
     
     def outliers__fd(self):
         print("       + Frame-wise Displacement...")
-        vox_sz = self.pp.voxel_size(self.steps["BASELINE"]["func"])
-        return self.pp.fd_out(self.steps["BASELINE"]["func"], self.stats.mean(vox_sz), self.dirs["motion"])
+        vox_sz = pp.voxel_size(self.steps["BASELINE"]["func"])
+        return pp.fd_out(self.steps["BASELINE"]["func"], stats.mean(vox_sz), self.dirs["motion"])
     
     def outliers__dvars(self):
         print("       + DVARS...")
         nomoco = "MOTCOR" in list(self.steps.keys())
         dvars_func = self.func if nomoco else self.steps["BASELINE"]["func"]
-        return self.pp.meantsBOLD(dvars_func, self.dirs["motion"], nomoco)
+        return pp.meantsBOLD(dvars_func, self.dirs["motion"], nomoco)
     
     # PREPROCESSING STEPS
     def pp_baseline(self):
-        anat_path = self.os.path.join(self.out, "anat", "func.nii.gz")
-        func_path = self.os.path.join(self.out, "func", "MPRage.nii.gz")
+        func_path = os.path.join(self.out, "func", "func.nii.gz")
+        anat_path = os.path.join(self.out, "anat", "MPRage.nii.gz")
         
-        self.shutil.copyfile(self.anat, anat_path)
-        self.shutil.copyfile(self.func, func_path)
+        shutil.copyfile(self.func, func_path)
+        shutil.copyfile(self.anat, anat_path)
+        
+        self.func = func_path
+        self.anat = anat_path
         
         self.steps["BASELINE"] = {
             "anat": anat_path,
@@ -127,12 +133,12 @@ class Preproc_subj:
         while last_step not in list(self.steps.keys()):
             # curr_step = self.step__current()
             next_step = self.step__next()
-            
+
             self.pp_switcher(next_step)
             
     def pp__skullstrip(self):
         print("SKULL STRIPPING")
-        self.func = self.pp.skullstrip(self.func, self.dirs["func"])
+        self.anat = pp.skullstrip(self.anat, self.dirs["anat"])
         self.steps["SKULLSTRIP"] = {
             "func": self.func,
             "anat": self.anat
@@ -140,15 +146,15 @@ class Preproc_subj:
     
     def pp__slicetime(self):
         print("SLICETIME CORRECTION")
-        self.func = self.pp.slicetime(self.func, self.dirs["func"])
-        self.steps["SKULLSTRIP"] = {
+        self.func = pp.slicetime(self.func, self.dirs["func"])
+        self.steps["SLICETIME"] = {
             "func": self.func,
             "anat": self.anat
         }
     
     def pp__motcor(self):
         print("MOTION CORRECTION")
-        self.func, _1d_filepath = self.pp.motcor(self.func, self.dirs["func"], self.dirs["motion"])
+        self.func, _1d_filepath = pp.motcor(self.func, self.dirs["func"], self.dirs["motion"])
         self.steps["MOTCOR"] = {
             "func"     : self.func,
             "anat"     : self.anat,
@@ -157,7 +163,7 @@ class Preproc_subj:
         
     def pp__spatnorm(self):
         print("SPATIAL NORMALIZATION")
-        self.anat, self.func, nl_warp, nl_premat = self.pp.spatnorm(self.func, self.anat, self.config["TEMPLATE"], self.dirs["func"], self.dirs["anat"], self.dirs["norm"])
+        self.anat, self.func, nl_warp, nl_premat = pp.spatnorm(self.func, self.anat, self.config["TEMPLATE"], self.dirs["func"], self.dirs["anat"], self.dirs["norm"])
         self.steps["NORM"] = {
             "func"     : self.func,
             "anat"     : self.anat,
@@ -167,18 +173,21 @@ class Preproc_subj:
     
     def pp__nuisreg(self):
         print("NUISANCE SIGNAL REGRESSION")
-        nuis_path = self.os.path.join(self.dirs["motion"], "nuisance_regressors.1D")
+        nuis_path = os.path.join(self.dirs["motion"], "nuisance_regressors.1D")
         
         csf_tcourse=None
         mot_tcourse=None
         
-        if self.config["GSR"] == 1:
-            csf_tcourse = self.csf_tcourse()
-        if self.config["MOTREG"] == 1:
+        if self.config["GSR"] == "1":
+            csf_tcourse = self.calc_csf_tcourse()
+        if self.config["MOTREG"] == "1":
             mot_tcourse = self.steps["MOTCOR"]["mot_estim"]
         
-        _ = self.pp.combine_nuis(csf_tcourse, mot_tcourse, nuis_path)
-        self.func = self.pp.nuis_reg(self.func, nuis_path, self.dirs["func"], poly=self.config["NUISANCE"])
+        print(csf_tcourse)
+        print(mot_tcourse)
+        
+        _ = pp.combine_nuis(csf_tcourse, mot_tcourse, nuis_path)
+        self.func = pp.nuis_reg(self.func, nuis_path, self.dirs["func"], poly=self.config["NUISANCE"])
         self.steps["NUISANCE"] = {
             "anat"    : self.anat,
             "func"    : self.func,
@@ -189,7 +198,7 @@ class Preproc_subj:
     
     def pp__smooth(self):
         print("SPATIAL SMOOTHING")
-        self.func = self.pp.spat_smooth(self.func, self.config["SMOOTH"], self.dirs["func"])
+        self.func = pp.spat_smooth(self.func, float(self.config["SMOOTH"]), self.dirs["func"])
         self.steps["SMOOTH"] = {
             "func": self.func,
             "anat": self.anat
@@ -205,8 +214,8 @@ class Preproc_subj:
         if self.config["SCRUB"] in ["UNION", "INTERSECT", "DVARS"]:
             out_dvars = self.outliers__dvars()
         
-        out_scrub = self.pp.mk_outliers(out_dvars, out_fd, self.dirs["motion"], method=self.config["SCRUB"])
-        self.func = self.pp.scrubbing(self.func, out_scrub, self.dirs["func"], interpolate=True)
+        out_scrub = pp.mk_outliers(out_dvars, out_fd, self.dirs["motion"], method=self.config["SCRUB"])
+        self.func = pp.scrubbing(self.func, out_scrub, self.dirs["func"], interpolate=True)
         self.steps["SCRUB"] = {
             "func": self.func,
             "anat": self.anat,

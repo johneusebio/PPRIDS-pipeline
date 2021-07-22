@@ -16,8 +16,6 @@ from nilearn.connectome import ConnectivityMeasure
 
 x = "Hi, I'm inside mod.py!"
 
-print(f"outside if block: _name_ is {__name__}")
-
 if __name__ != "__main__":
     print("Using non-interactive matplotlib backend: Agg")
     matplotlib.use("Agg")  # non-interactive backend

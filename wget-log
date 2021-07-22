@@ -1,22 +1,0 @@
---2020-11-19 00:06:20--  https://aka.ms/dotnet-core-applaunch?framework=Microsoft.NETCore.App
-Resolving aka.ms (aka.ms)... 184.87.56.190
-Connecting to aka.ms (aka.ms)|184.87.56.190|:443... connected.
-HTTP request sent, awaiting response... 301 Moved Permanently
-Location: https://dotnet.microsoft.com/get-dotnet/dotnet-core?framework=Microsoft.NETCore.App [following]
---2020-11-19 00:06:20--  https://dotnet.microsoft.com/get-dotnet/dotnet-core?framework=Microsoft.NETCore.App
-Resolving dotnet.microsoft.com (dotnet.microsoft.com)... 13.107.246.10, 2620:1ec:bdf::10
-Connecting to dotnet.microsoft.com (dotnet.microsoft.com)|13.107.246.10|:443... connected.
-HTTP request sent, awaiting response... 302 Found
-Location: https://dotnet.microsoft.com/download/dotnet-core/?utm_source=getdotnetcore&utm_medium=referral [following]
---2020-11-19 00:06:20--  https://dotnet.microsoft.com/download/dotnet-core/?utm_source=getdotnetcore&utm_medium=referral
-Reusing existing connection to dotnet.microsoft.com:443.
-HTTP request sent, awaiting response... 200 OK
-Cookie coming from dotnet.microsoft.com attempted to set domain to dotnetwebsite.azurewebsites.net
-Cookie coming from dotnet.microsoft.com attempted to set domain to dotnetwebsite.azurewebsites.net
-Length: unspecified [text/html]
-Saving to: ‘dotnet-core-applaunch?framework=Microsoft.NETCore.App’
-
-          dotnet-co     [<=>                 ]       0  --.-KB/s               dotnet-core-applaun     [ <=>                ]  51.86K  --.-KB/s    in 0.005s  
-
-2020-11-19 00:06:21 (9.78 MB/s) - ‘dotnet-core-applaunch?framework=Microsoft.NETCore.App’ saved [53102]
-
