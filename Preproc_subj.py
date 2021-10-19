@@ -1,9 +1,12 @@
 
 import os
 import pathlib
+import pickle
 import shutil
-import preprocessing as pp
 import statistics as stats
+
+import preprocessing as pp
+
 
 class Preproc_subj:
     
@@ -23,11 +26,14 @@ class Preproc_subj:
         # initiate the baseline
         self.pp_baseline()
         self.perform_pp()  # maybe don't include this in the initialization step. Too much at once.
+        self.save_pkl()
+        return
         
     def pp_switcher(self, pp_step):
         switcher = {
             "SKULLSTRIP" : self.pp__skullstrip,
             "SLICETIME"  : self.pp__slicetime,
+            "TEMPORAL"   : self.pp__temporal,
             "MOTCOR"     : self.pp__motcor,
             "NORM"       : self.pp__spatnorm,
             "SMOOTH"     : self.pp__smooth,
@@ -53,7 +59,14 @@ class Preproc_subj:
             "qc"     : os.path.join(self.out, "quality_control"),
             "segment": os.path.join(self.out, "anat", "segment")
         }
-        
+    
+    def save_pkl(self):
+        with open(os.path.join(self.out, "steps.p"), "wb") as fp:
+            pickle.dump(self.steps, fp, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(os.path.join(self.out, "config.p"), "wb") as fp:
+            pickle.dump(self.config, fp, protocol=pickle.HIGHEST_PROTOCOL)
+        print("")
+
     def step__next(self):
         current_key = self.step__current()
         current_val = self.step_order[current_key]
@@ -123,7 +136,8 @@ class Preproc_subj:
         
         self.steps["BASELINE"] = {
             "anat": anat_path,
-            "func": func_path
+            "func": func_path,
+            "TR"  : pp.getTR(func_path)
         }
         return
     
@@ -152,6 +166,14 @@ class Preproc_subj:
             "anat": self.anat
         }
     
+    def pp__temporal(self):
+        print("TEMPORAL FILTERING")
+        self.func = pp.temporal_filtering(img=self.func, out_dir=self.dirs["func"], TR=float(self.steps["BASELINE"]["TR"]), hp_hz=float(self.config["TEMPORAL"][0]), lp_hz=float(self.config["TEMPORAL"][1]))
+        self.steps["TEMPORAL"] = {
+            "func": self.func,
+            "anat": self.anat
+        }
+        
     def pp__motcor(self):
         print("MOTION CORRECTION")
         self.func, _1d_filepath = pp.motcor(self.func, self.dirs["func"], self.dirs["motion"])

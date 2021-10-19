@@ -2,16 +2,21 @@ import os
 import pickle
 import decimal
 import pathlib
+import concurrent.futures
+from time import sleep
+
+import nibabel as nib
 import numpy as np
 import pandas as pd
-import nibabel as nib
+from nipype.interfaces.fsl import TemporalFilter # temporal filtering of the time series
+
 import Preproc_subj as ppo
-from time import sleep
 
 # Config Defaults
 default_config = { 
     "SKULLSTRIP" : "1",
     "SLICETIME"  : "1",
+    "TEMPORAL"   : ["0.01", "-1"],
     "MOTCOR"     : "1",
     "NORM"       : "1",
     "SMOOTH"     : "6", # gaussian smoothing kernel size in mm
@@ -28,9 +33,10 @@ step_order={
     "SLICETIME" :2,
     "MOTCOR"    :3,
     "NORM"      :4,
-    "NUISANCE"  :5,
-    "SCRUB"     :6,
-    "SMOOTH"    :7
+    "TEMPORAL"  :5,
+    "NUISANCE"  :6,
+    "SCRUB"     :7,
+    "SMOOTH"    :8
 }
 
 # Support Functions
@@ -146,6 +152,10 @@ def interpret_config(filepath):
     config_dict = check_defaults(config_dict, default_config)
     return(config_dict)
 
+def norm_range(x):
+    # normalize values to a range of (-1, 1)
+    return 2.*(x - np.min(x))/np.ptp(x)-1
+
 def getTR(filepath):    
     img = nib.load(filepath)
     tr  = img.header.get_zooms()[3]
@@ -184,6 +194,17 @@ def brainroi(img, out_dir):
     os.system("robustfov -i {} -r {}".format(img, roi_img))
 
     return(roi_img)
+    
+def temporal_filtering(img, out_dir, TR, hp_hz=100, lp_hz=-1):   
+    
+    # print("HIGHPASS: {} {}".format(str(hp_hz), str(1/(2*TR*hp_hz))))
+    # print("LOWPASS: {} {}".format(str(lp_hz), str(1/(2*TR*lp_hz))))
+    
+    # set the filter cutoffs to negative values to skip
+    out = os.path.join(out_dir, "bp_"+os.path.basename(img))
+    TF = TemporalFilter(in_file=img, out_file=out, highpass_sigma=1/(2*TR*hp_hz), lowpass_sigma = 1/(2*TR*lp_hz))
+    TF.run()
+    return out
 
 def skullstrip(img, out_dir):
     out_file = "brain_" + os.path.basename(img)
@@ -307,7 +328,13 @@ def combine_nuis(nuis1, nuis2, output):
     
 def nuis_reg(img, _1d, out_dir, pref="nuis", poly="1"):
     clean_img=os.path.join(out_dir, pref + "_" + rm_ext(img) + ".nii.gz")
-    command="3dDeconvolve -input {} -ortvec  {} {} -polort {} -errts {}".format(img, _1d, pref, poly, clean_img)
+    matrix=os.path.join(out_dir, "Decon.xmat.1D")
+    print("img: {}".format(img))
+    print("_1d: {}".format(_1d))
+    print("out_dir: {}".format(out_dir))
+    print("clean_img: {}".format(clean_img))
+    print("matrix: {}".format(matrix))
+    command="3dDeconvolve -input {} -ortvec  {} {} -polort {} -errts {} -x1D {} -nobucket".format(img, _1d, pref, poly, clean_img, matrix)
     os.system(command)
 
     return(clean_img)
@@ -377,6 +404,7 @@ def mk_outliers(dvars, fd, out_dir, method="UNION"):
     if dvars is not None:
         dvars_mat = pd.read_csv(dvars, delimiter="\t", header=None)
     
+    outliers_mat = [0] # default if didn't run dvars or fd
     if method=="UNION":
         outliers_mat = (fd_mat + dvars_mat).astype("bool")
         outliers_mat = outliers_mat.astype("int")
@@ -487,12 +515,31 @@ def wrapper_lvl2(input_file, config_file):
     nrow   = len(input.index)
     
     for row in range(nrow):
-        subj_pp = ppo.Preproc_subj(input.loc[row,:], config, step_order)
-        
-        with open(os.path.join(subj_pp.out, "steps.p"), "wb") as fp:
-            pickle.dump(subj_pp.steps, fp, protocol=pickle.HIGHEST_PROTOCOL)
-        with open(os.path.join(subj_pp.out, "config.p"), "wb") as fp:
-            pickle.dump(subj_pp.config, fp, protocol=pickle.HIGHEST_PROTOCOL)
-        print("")
+        ppo.Preproc_subj(input.loc[row,:], config, step_order)
         
     return
+
+def wrapper_lvl2_parallel(input_file, config_file):
+    complete_order = {}
+
+    config = interpret_config(config_file)
+    input  = interpret_input(input_file)
+    nrow   = len(input.index)
+
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        futures = {executor.submit(ppo.Preproc_subj, input.loc[row,:], config, step_order): row for row in range(nrow)}
+        
+        for i, f in enumerate(concurrent.futures.as_completed(futures), start=0):
+            subj = futures[f]  # deal with async nature of submit
+            print(f"subj idx: {subj}")
+            print(subj)
+
+            # count how many tasks are done (or just initialize a counter at the top to avoid looping)
+            states = [i._state for i in futures]
+            print(states)
+            print(i)
+            idx = states.count("FINISHED")
+            complete_order[subj] = idx - 1
+            print(f"completed order: {complete_order}")
+
+            print("")
