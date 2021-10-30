@@ -1,9 +1,12 @@
-import os
 import concurrent.futures
+import os
+
 import quality_control as qc
+import preprocessing as pp
+
 
 def run_qc(subj):
-    topdir = "/mnt/d/doctoral_thesis/Preprocessing"
+    topdir = "/mnt/d/doctoral_thesis/SART"
     nifti_pp = os.path.join(topdir, subj, "func", "s_scrub_nuis_nl_m_t_func.nii.gz")
     nifti_ref = os.path.join(topdir, subj, "func", "nl_m_t_func.nii.gz")
     mot_params = os.path.join(topdir, subj, "motion", "1d_t_func.1D")

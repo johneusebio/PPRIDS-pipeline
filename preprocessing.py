@@ -1,14 +1,13 @@
-import os
-import pickle
-import decimal
-import pathlib
 import concurrent.futures
+import decimal
+import os
+import pathlib
+import pickle
 from time import sleep
 
 import nibabel as nib
 import numpy as np
 import pandas as pd
-from nipype.interfaces.fsl import TemporalFilter # temporal filtering of the time series
 
 import Preproc_subj as ppo
 
@@ -16,7 +15,6 @@ import Preproc_subj as ppo
 default_config = { 
     "SKULLSTRIP" : "1",
     "SLICETIME"  : "1",
-    "TEMPORAL"   : ["0.01", "-1"],
     "MOTCOR"     : "1",
     "NORM"       : "1",
     "SMOOTH"     : "6", # gaussian smoothing kernel size in mm
@@ -33,10 +31,9 @@ step_order={
     "SLICETIME" :2,
     "MOTCOR"    :3,
     "NORM"      :4,
-    "TEMPORAL"  :5,
-    "NUISANCE"  :6,
-    "SCRUB"     :7,
-    "SMOOTH"    :8
+    "NUISANCE"  :5,
+    "SCRUB"     :6,
+    "SMOOTH"    :7
 }
 
 # Support Functions
@@ -152,7 +149,15 @@ def interpret_config(filepath):
     config_dict = check_defaults(config_dict, default_config)
     return(config_dict)
 
-def norm_range(x):
+def norm_range(x: list):
+    """Normalize vector of numbers to a range of (-1,1)
+
+    Args:
+        x (list): Vector of numbers to normalize
+
+    Returns:
+        [type]: Normalized vector with range of (-1,1)
+    """
     # normalize values to a range of (-1, 1)
     return 2.*(x - np.min(x))/np.ptp(x)-1
 
@@ -194,17 +199,6 @@ def brainroi(img, out_dir):
     os.system("robustfov -i {} -r {}".format(img, roi_img))
 
     return(roi_img)
-    
-def temporal_filtering(img, out_dir, TR, hp_hz=100, lp_hz=-1):   
-    
-    # print("HIGHPASS: {} {}".format(str(hp_hz), str(1/(2*TR*hp_hz))))
-    # print("LOWPASS: {} {}".format(str(lp_hz), str(1/(2*TR*lp_hz))))
-    
-    # set the filter cutoffs to negative values to skip
-    out = os.path.join(out_dir, "bp_"+os.path.basename(img))
-    TF = TemporalFilter(in_file=img, out_file=out, highpass_sigma=1/(2*TR*hp_hz), lowpass_sigma = 1/(2*TR*lp_hz))
-    TF.run()
-    return out
 
 def skullstrip(img, out_dir):
     out_file = "brain_" + os.path.basename(img)
@@ -227,11 +221,16 @@ def slicetime(img, out_dir):
 def motcor(img, func_dir, motion_dir):
     motcor_path =os.path.join(func_dir, "m_"+os.path.basename(img))
     _1dfile_path=os.path.join(motion_dir, "1d_"+rm_ext(os.path.basename(img))+".1D")
+    norm_1dfile_path=os.path.join(motion_dir, "n1d_"+rm_ext(os.path.basename(img))+".1D")
 
     command="3dvolreg -base 0 -prefix {} -1Dfile {} {}".format(motcor_path, _1dfile_path, img)
     os.system(command)
 
-    return(motcor_path, _1dfile_path)
+    mot_data = np.genfromtxt(_1dfile_path)
+    norm_mot_data = np.apply_along_axis(norm_range, 0, mot_data)
+    np.savetxt(fname=norm_1dfile_path, X=norm_mot_data, delimiter="\t", fmt="%f")
+
+    return(motcor_path, norm_1dfile_path)
     
 # new spatial normalization
 def spatnorm(f_img, a_img, template, func_dir, anat_dir, norm_dir):

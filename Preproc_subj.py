@@ -33,7 +33,6 @@ class Preproc_subj:
         switcher = {
             "SKULLSTRIP" : self.pp__skullstrip,
             "SLICETIME"  : self.pp__slicetime,
-            "TEMPORAL"   : self.pp__temporal,
             "MOTCOR"     : self.pp__motcor,
             "NORM"       : self.pp__spatnorm,
             "SMOOTH"     : self.pp__smooth,
@@ -166,14 +165,6 @@ class Preproc_subj:
             "anat": self.anat
         }
     
-    def pp__temporal(self):
-        print("TEMPORAL FILTERING")
-        self.func = pp.temporal_filtering(img=self.func, out_dir=self.dirs["func"], TR=float(self.steps["BASELINE"]["TR"]), hp_hz=float(self.config["TEMPORAL"][0]), lp_hz=float(self.config["TEMPORAL"][1]))
-        self.steps["TEMPORAL"] = {
-            "func": self.func,
-            "anat": self.anat
-        }
-        
     def pp__motcor(self):
         print("MOTION CORRECTION")
         self.func, _1d_filepath = pp.motcor(self.func, self.dirs["func"], self.dirs["motion"])
