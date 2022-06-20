@@ -1,4 +1,0 @@
-# 3dDeconvolve -input /mnt/d/doctoral_thesis/Rest/2357ZL/func/nl_m_t_func.nii.gz -ortvec /mnt/d/doctoral_thesis/Rest/2357ZL/motion/nuisance_regressors.1D nuis -polort 3 -errts /mnt/d/doctoral_thesis/Rest/2357ZL/func/nuis_nl_m_t_func.nii.gz -x1D /mnt/d/doctoral_thesis/Rest/2357ZL/func/Decon.xmat.1D -nobucket
-
-3dREMLfit -matrix /mnt/d/doctoral_thesis/Rest/2357ZL/func/Decon.xmat.1D -input /mnt/d/doctoral_thesis/Rest/2357ZL/func/nl_m_t_func.nii.gz \
- -Rerrts /mnt/d/doctoral_thesis/Rest/2357ZL/func/nuis_nl_m_t_func_REML -verb $*

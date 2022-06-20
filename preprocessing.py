@@ -77,7 +77,7 @@ def parse_input(text, keywords, split="=", first="[", last="]"):
     return(key, val)
     
 def check_defaults(config_dict, defaults):
-    default_keys=[key for key in defaults.keys()]
+    default_keys = list(defaults.keys())
 
     restore_defaults=[key not in config_dict.keys() for key in default_keys]
     restore_defaults=list(filter(lambda x: restore_defaults[x], range(len(restore_defaults))))
@@ -93,7 +93,7 @@ def voxel_size(img, excl_time=True):
     vox_sz = nii.header.get_zooms()
 
     if excl_time:
-        vox_sz=vox_sz[0:3]
+        vox_sz = vox_sz[:3]
     return(vox_sz)
     
 def interpret_input_line(line, keywords):
@@ -423,14 +423,14 @@ def mk_outliers(dvars, fd, out_dir, method="UNION"):
 def interp_time(img, out, int_ind):
     if len(img.shape)!=4:
         raise Exception("Nifti image must have 4 dimensions.")
-    
+
     # make blank image
-    int_dim = list(img.shape[0:3])
+    int_dim = list(img.shape[:3])
     int_dim.append(int_ind[1]-int_ind[0]-1)
     int_img = np.empty(int_dim)
 
     int_ind = np.setdiff1d(int_ind, [0, img.shape[3]]).tolist()
-        
+
     for row in range(img.shape[0]):
         for col in range(img.shape[1]):
             for slice in range(img.shape[2]):
