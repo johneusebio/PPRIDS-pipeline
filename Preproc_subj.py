@@ -96,9 +96,7 @@ class Preproc_subj:
         raise Exception("Key does not exist.")
     
     def join_list(self, ls, delim="/"):
-        if isinstance(ls, list):
-            return delim.join(ls)
-        return ls
+        return delim.join(ls) if isinstance(ls, list) else ls
     
     def calc_csf_tcourse(self):
         csf_mask = pp.segment(self.anat, self.dirs["segment"])
@@ -187,18 +185,16 @@ class Preproc_subj:
     def pp__nuisreg(self):
         print("NUISANCE SIGNAL REGRESSION")
         nuis_path = os.path.join(self.dirs["motion"], "nuisance_regressors.1D")
-        
-        csf_tcourse=None
+
         mot_tcourse=None
-        
-        if self.config["GSR"] == "1":
-            csf_tcourse = self.calc_csf_tcourse()
+
+        csf_tcourse = self.calc_csf_tcourse() if self.config["GSR"] == "1" else None
         if self.config["MOTREG"] == "1":
             mot_tcourse = self.steps["MOTCOR"]["mot_estim"]
-        
+
         print(csf_tcourse)
         print(mot_tcourse)
-        
+
         _ = pp.combine_nuis(csf_tcourse, mot_tcourse, nuis_path)
         self.func = pp.nuis_reg(self.func, nuis_path, self.dirs["func"], poly=self.config["NUISANCE"])
         self.steps["NUISANCE"] = {
@@ -219,14 +215,14 @@ class Preproc_subj:
     
     def pp__scrub(self):
         print("SCRUBBING fMRI TIME SERIES")
-        
+
         out_fd    = None
         out_dvars = None
         if self.config["SCRUB"] in ["UNION", "INTERSECT", "FD"]:
             out_fd    = self.outliers__fd()
         if self.config["SCRUB"] in ["UNION", "INTERSECT", "DVARS"]:
             out_dvars = self.outliers__dvars()
-        
+
         out_scrub = pp.mk_outliers(out_dvars, out_fd, self.dirs["motion"], method=self.config["SCRUB"])
         self.func = pp.scrubbing(self.func, out_scrub, self.dirs["func"], interpolate=True)
         self.steps["SCRUB"] = {

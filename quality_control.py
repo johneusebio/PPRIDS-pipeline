@@ -154,12 +154,12 @@ def rXdist(X, coords):
     Compute the correlation and euclidean distance between each pair of ROIs.
     """
     n_uppertriangle = elem_uppertriangle(X)
-    
+
     r_tab    = np.zeros([n_uppertriangle])   # correlation (r) b/w rois A & B
     a_tab    = np.zeros([n_uppertriangle,3]) # coordinates of roi A (rows)
     b_tab    = np.zeros([n_uppertriangle,3]) # coorindates of roi B (columns)
     dist_tab = np.zeros([n_uppertriangle])   # Euclidean dist b/w rois A & B
-    
+
     dims = X.shape
     count=0
     for rr in range(dims[0]):
@@ -170,7 +170,7 @@ def rXdist(X, coords):
             a_tab   [count,] = list(coords[rr])
             b_tab   [count,] = list(coords[cc])
             dist_tab[count]  = abs(euc_dist(a_tab[count,], b_tab[count,]))
-            
+
             count+=1
     return r_tab, a_tab, b_tab, dist_tab
 
@@ -238,11 +238,11 @@ def ica(img, output, n_ic=4, mask=None, name=None, memory=None):
     canica=CanICA(n_components=n_ic, smoothing_fwhm=0, memory=memory, mask=mask, random_state=0, n_jobs=1, n_init=4)
     canica.fit(img)
     canica.components_img_.to_filename(ica_img)
-    
+
     ica_fig_ls = []
 
     for i, cur_img in enumerate(iter_img(canica.components_img_)):
-        ica_jpg = os.path.join(output, "IC"+str(i)+"_"+name+".jpg")
+        ica_jpg = os.path.join(output, f"IC{str(i)}_" + name + ".jpg")
         plot_stat_map(cur_img, display_mode="ortho", title="IC %d" % i, colorbar=True, output_file=ica_jpg)
         ica_fig_ls.append(ica_jpg)
 

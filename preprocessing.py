@@ -67,8 +67,8 @@ def parse_line(text, keywords, split="="):
     return(key, val)
 
 def strip_chars(text, first, last):
-    text = "{}".format(text[1:] if text.startswith(first) else text)
-    text = "{}".format(text[:-1] if text.endswith(last) else text)
+    text = f"{text[1:] if text.startswith(first) else text}"
+    text = f"{text[:-1] if text.endswith(last) else text}"
     return(text)
 
 def parse_input(text, keywords, split="=", first="[", last="]"):
@@ -99,7 +99,7 @@ def voxel_size(img, excl_time=True):
 def interpret_input_line(line, keywords):
     input_dict = {}
     items = line.split(",")
-    
+
     for item in items:
         item=item.strip()
         try:
@@ -113,7 +113,7 @@ def interpret_input_line(line, keywords):
         raise Exception(input_dict["FUNC"] + " is not a valid filepath.")
     if not check_exist(input_dict["ANAT"], "file"):
         raise Exception(input_dict["ANAT"] + " is not a valid filepath.")
-       
+
     return(input_dict)
     
 def interpret_input(filepath):
@@ -189,14 +189,14 @@ def which(list, x=True):
     return [iter for iter, elem in enumerate(list) if elem == x]
 
 def cp_rename(filepath, newpath):
-    os.system("cp {} {}".format(filepath, newpath))
+    os.system(f"cp {filepath} {newpath}")
     return newpath
 
 # Preprocessing Functions
 
 def brainroi(img, out_dir):
     roi_img = os.path.join(out_dir, "roi_"+os.path.basename(img))
-    os.system("robustfov -i {} -r {}".format(img, roi_img))
+    os.system(f"robustfov -i {img} -r {roi_img}")
 
     return(roi_img)
 
@@ -204,16 +204,16 @@ def skullstrip(img, out_dir):
     out_file = "brain_" + os.path.basename(img)
     skullstr = os.path.join(out_dir, out_file)
 
-    command="bet {} {} -R".format(img, skullstr)
+    command = f"bet {img} {skullstr} -R"
     os.system(command)
-    
+
     return(skullstr)
 
 def slicetime(img, out_dir):
     tr=getTR(img)
     tshift_path=os.path.join(out_dir, "t_" + rm_ext(img)+".nii.gz")
-    
-    command="3dTshift -TR {}s -prefix {} {}".format(tr, tshift_path, img)
+
+    command = f"3dTshift -TR {tr}s -prefix {tshift_path} {img}"
     os.system(command)
 
     return(tshift_path)
@@ -223,7 +223,10 @@ def motcor(img, func_dir, motion_dir):
     _1dfile_path=os.path.join(motion_dir, "1d_"+rm_ext(os.path.basename(img))+".1D")
     norm_1dfile_path=os.path.join(motion_dir, "n1d_"+rm_ext(os.path.basename(img))+".1D")
 
-    command="3dvolreg -base 0 -prefix {} -1Dfile {} {}".format(motcor_path, _1dfile_path, img)
+    command = (
+        f"3dvolreg -base 0 -prefix {motcor_path} -1Dfile {_1dfile_path} {img}"
+    )
+
     os.system(command)
 
     mot_data = np.genfromtxt(_1dfile_path)
@@ -237,39 +240,42 @@ def spatnorm(f_img, a_img, template, func_dir, anat_dir, norm_dir):
     # lin warp func to struct
     print("       + Linear-warping functional to structural...")
     l_func_omat=os.path.join(norm_dir, "func2str.mat")
-    command="flirt -ref {} -in {} -omat {} -dof 6".format(a_img, f_img, l_func_omat)
+    command = f"flirt -ref {a_img} -in {f_img} -omat {l_func_omat} -dof 6"
     os.system(command)
-    
+
     # lin warp struct to template
     print("       + Linear-warping structural to standard template...")
     l_anat_img =os.path.join(anat_dir, "l_" + os.path.basename(a_img))
     l_anat_omat=os.path.join(norm_dir, "aff_str2std.mat")
-    command="flirt -ref {} -in {} -omat {} -out {}".format(template, a_img, l_anat_omat, l_anat_img)
+    command = f"flirt -ref {template} -in {a_img} -omat {l_anat_omat} -out {l_anat_img}"
+
     os.system(command)
-    
+
     # non-lin warp struct to template
     print("       + Non-linear-warping structural to standard template...")
     nl_anat_img  =os.path.join(anat_dir, "n" + os.path.basename(l_anat_img))
     cout_anat_img=os.path.join(anat_dir, "cout_" + os.path.basename(nl_anat_img))
-    command="fnirt --ref={} --in={} --aff={} --iout={} --cout={} --subsamp=2,2,2,1".format(template, a_img, l_anat_omat, nl_anat_img, cout_anat_img)
+    command = f"fnirt --ref={template} --in={a_img} --aff={l_anat_omat} --iout={nl_anat_img} --cout={cout_anat_img} --subsamp=2,2,2,1"
+
     os.system(command)
-    
+
     # make binary mask from non-lin warped image
     print("       + Creating binary mask from non-linearly warped image...")
     bin_nl_anat_img=os.path.join(anat_dir, "bin_" + os.path.basename(nl_anat_img))
-    command="fslmaths {} -bin {}".format(nl_anat_img, bin_nl_anat_img)
+    command = f"fslmaths {nl_anat_img} -bin {bin_nl_anat_img}"
     os.system(command)
-    
+
     # apply std warp to func data
     print("       + Applying standardized warp to functional data...")
     nl_func_img=os.path.join(func_dir, "nl_"+os.path.basename(f_img))
-    command="applywarp --ref={} --in={} --out={} --warp={} --premat={}".format(template, f_img, nl_func_img, cout_anat_img, l_func_omat)
+    command = f"applywarp --ref={template} --in={f_img} --out={nl_func_img} --warp={cout_anat_img} --premat={l_func_omat}"
+
     os.system(command)
 
     # create tempalte mask
     print("       + Creating binary template mask...")
     mask_path=os.path.join(anat_dir, "mask_" + os.path.basename(template))
-    command="fslmaths {} -bin {}".format(template, mask_path)
+    command = f"fslmaths {template} -bin {mask_path}"
     os.system(command)
 
     return(nl_anat_img, nl_func_img, cout_anat_img, l_anat_omat) # anat, func, warp, premat
@@ -342,8 +348,7 @@ def nuis_reg(img, _1d, out_dir, pref="nuis", poly="1"):
 
 def file_len(fname):
     with open(fname) as f:
-        for i, _ in enumerate(f):
-            pass
+        pass
     return i + 1
 
 def meantsBOLD(img, outdir, nomoco):
@@ -531,7 +536,7 @@ def wrapper_lvl2_parallel(input_file, config_file):
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(ppo.Preproc_subj, input.loc[row,:], config, step_order): row for row in range(nrow)}
-        
+
         for i, f in enumerate(concurrent.futures.as_completed(futures), start=0):
             subj = futures[f]  # deal with async nature of submit
             print(f"subj idx: {subj}")
