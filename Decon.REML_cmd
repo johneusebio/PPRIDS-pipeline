@@ -1,4 +1,0 @@
-# 3dDeconvolve -input /mnt/d/Preprocessing/2610ZL/func/nl_m_t_func.nii.gz -ortvec /mnt/d/Preprocessing/2610ZL/motion/nuisance_regressors.1D nuis -polort 3 -errts /mnt/d/Preprocessing/2610ZL/func/nuis_nl_m_t_func.nii.gz
-
-3dREMLfit -matrix Decon.xmat.1D -input /mnt/d/Preprocessing/2610ZL/func/nl_m_t_func.nii.gz \
- -Rbuck Decon_REML -Rvar Decon_REMLvar -Rerrts /mnt/d/Preprocessing/2610ZL/func/nuis_nl_m_t_func_REML -verb $*

@@ -1,13 +1,15 @@
-import os
-import gzip
-import shutil
+import concurrent.futures
 import decimal
+import os
 import pathlib
-import operator
+import pickle
+from time import sleep
+
+import nibabel as nib
 import numpy as np
 import pandas as pd
-import nibabel as nib
-from time import sleep
+
+import Preproc_subj as ppo
 
 # Config Defaults
 default_config = { 
@@ -29,11 +31,9 @@ step_order={
     "SLICETIME" :2,
     "MOTCOR"    :3,
     "NORM"      :4,
-    "GSR"       :5,
-    "MOTREG"    :6,
-    "NUISANCE"  :7,
-    "SCRUB"     :8,
-    "SMOOTH"    :9
+    "NUISANCE"  :5,
+    "SCRUB"     :6,
+    "SMOOTH"    :7
 }
 
 # Support Functions
@@ -77,7 +77,7 @@ def parse_input(text, keywords, split="=", first="[", last="]"):
     return(key, val)
     
 def check_defaults(config_dict, defaults):
-    default_keys=[key for key in defaults.keys()]
+    default_keys = list(defaults.keys())
 
     restore_defaults=[key not in config_dict.keys() for key in default_keys]
     restore_defaults=list(filter(lambda x: restore_defaults[x], range(len(restore_defaults))))
@@ -93,7 +93,7 @@ def voxel_size(img, excl_time=True):
     vox_sz = nii.header.get_zooms()
 
     if excl_time:
-        vox_sz=vox_sz[0:3]
+        vox_sz = vox_sz[:3]
     return(vox_sz)
     
 def interpret_input_line(line, keywords):
@@ -149,13 +149,17 @@ def interpret_config(filepath):
     config_dict = check_defaults(config_dict, default_config)
     return(config_dict)
 
-def afni2nifti(filepath, rm_orig=True):    
-    nii_filepath=os.path.join(os.path.dirname(filepath), rm_ext(filepath))+".nii"
-    os.system("3dAFNItoNIFTI -prefix {} {}".format(nii_filepath, filepath+"*.HEAD"))
-    if rm_orig:
-        os.system("rm {}*.HEAD".format(filepath))
-        os.system("rm {}*.BRIK".format(filepath))
-    return(nii_filepath)
+def norm_range(x: list):
+    """Normalize vector of numbers to a range of (-1,1)
+
+    Args:
+        x (list): Vector of numbers to normalize
+
+    Returns:
+        [type]: Normalized vector with range of (-1,1)
+    """
+    # normalize values to a range of (-1, 1)
+    return 2.*(x - np.min(x))/np.ptp(x)-1
 
 def getTR(filepath):    
     img = nib.load(filepath)
@@ -184,36 +188,6 @@ def gauss_mm2sigma(mm):
 def which(list, x=True):
     return [iter for iter, elem in enumerate(list) if elem == x]
 
-def gzip_file(filename, rm_orig=True):
-    with open(filename, 'rb') as f_in:
-        with gzip.open(filename+'.gz', 'wb') as f_out:
-            shutil.copyfileobj(f_in, f_out)
-        if rm_orig:
-            os.remove(filename)
-    return(filename+'.gz')
-
-def get_key(val, my_dict):
-    for key, value in my_dict.items():
-         if val == value:
-             return key
-
-def get_step(my_dict, ref_dict, which="prev", ignore=["BASELINE"], give="key"):
-    if ignore is None:
-        ignore=[]
-    if which == "first":
-        target=min
-    elif which == "prev":
-        target=max
-    my_keys = list(my_dict.keys())
-    for ig in ignore:
-        my_keys.remove(ig)
-
-    key_val = [ref_dict[key] for key in my_keys]
-    if give=="key":
-        return get_key(target(key_val), ref_dict)
-    elif give=="value":
-        return target(key_val)
-
 def cp_rename(filepath, newpath):
     os.system("cp {} {}".format(filepath, newpath))
     return newpath
@@ -227,8 +201,7 @@ def brainroi(img, out_dir):
     return(roi_img)
 
 def skullstrip(img, out_dir):
-    out_dir  = os.path.join(out_dir, "anat")
-    out_file = "brain_" + rm_ext(img)
+    out_file = "brain_" + os.path.basename(img)
     skullstr = os.path.join(out_dir, out_file)
 
     command="bet {} {} -R".format(img, skullstr)
@@ -238,98 +211,101 @@ def skullstrip(img, out_dir):
 
 def slicetime(img, out_dir):
     tr=getTR(img)
-    tshift_path=os.path.join(out_dir, "func", "t_" + rm_ext(img)+".nii.gz")
+    tshift_path=os.path.join(out_dir, "t_" + rm_ext(img)+".nii.gz")
     
     command="3dTshift -TR {}s -prefix {} {}".format(tr, tshift_path, img)
     os.system(command)
 
     return(tshift_path)
 
-def motcor(img, out_dir):
-    motcor_path =os.path.join(out_dir, "func", "m_"+os.path.basename(img))
-    _1dfile_path=os.path.join(out_dir, "motion", "1d_"+rm_ext(os.path.basename(img))+".1D")
+def motcor(img, func_dir, motion_dir):
+    motcor_path =os.path.join(func_dir, "m_"+os.path.basename(img))
+    _1dfile_path=os.path.join(motion_dir, "1d_"+rm_ext(os.path.basename(img))+".1D")
+    norm_1dfile_path=os.path.join(motion_dir, "n1d_"+rm_ext(os.path.basename(img))+".1D")
 
     command="3dvolreg -base 0 -prefix {} -1Dfile {} {}".format(motcor_path, _1dfile_path, img)
     os.system(command)
 
-    return(motcor_path, _1dfile_path)
+    mot_data = np.genfromtxt(_1dfile_path)
+    norm_mot_data = np.apply_along_axis(norm_range, 0, mot_data)
+    np.savetxt(fname=norm_1dfile_path, X=norm_mot_data, delimiter="\t", fmt="%f")
+
+    return(motcor_path, norm_1dfile_path)
     
 # new spatial normalization
-def spatnorm(f_img, a_img, template, out_dir):
+def spatnorm(f_img, a_img, template, func_dir, anat_dir, norm_dir):
     # lin warp func to struct
     print("       + Linear-warping functional to structural...")
-    l_func_omat=os.path.join(out_dir, "spat_norm", "func2str.mat")
+    l_func_omat=os.path.join(norm_dir, "func2str.mat")
     command="flirt -ref {} -in {} -omat {} -dof 6".format(a_img, f_img, l_func_omat)
     os.system(command)
     
     # lin warp struct to template
     print("       + Linear-warping structural to standard template...")
-    l_anat_img =os.path.join(out_dir, "anat", "l_" + os.path.basename(a_img))
-    l_anat_omat=os.path.join(out_dir, "spat_norm", "aff_str2std.mat")
+    l_anat_img =os.path.join(anat_dir, "l_" + os.path.basename(a_img))
+    l_anat_omat=os.path.join(norm_dir, "aff_str2std.mat")
     command="flirt -ref {} -in {} -omat {} -out {}".format(template, a_img, l_anat_omat, l_anat_img)
     os.system(command)
     
     # non-lin warp struct to template
     print("       + Non-linear-warping structural to standard template...")
-    nl_anat_img  =os.path.join(out_dir, "anat", "n" + os.path.basename(l_anat_img))
-    cout_anat_img=os.path.join(out_dir, "anat", "cout_" + os.path.basename(nl_anat_img))
+    nl_anat_img  =os.path.join(anat_dir, "n" + os.path.basename(l_anat_img))
+    cout_anat_img=os.path.join(anat_dir, "cout_" + os.path.basename(nl_anat_img))
     command="fnirt --ref={} --in={} --aff={} --iout={} --cout={} --subsamp=2,2,2,1".format(template, a_img, l_anat_omat, nl_anat_img, cout_anat_img)
     os.system(command)
     
     # make binary mask from non-lin warped image
     print("       + Creating binary mask from non-linearly warped image...")
-    bin_nl_anat_img=os.path.join(out_dir, "anat", "bin_" + os.path.basename(nl_anat_img))
+    bin_nl_anat_img=os.path.join(anat_dir, "bin_" + os.path.basename(nl_anat_img))
     command="fslmaths {} -bin {}".format(nl_anat_img, bin_nl_anat_img)
     os.system(command)
     
     # apply std warp to func data
     print("       + Applying standardized warp to functional data...")
-    nl_func_img=os.path.join(out_dir, "func", "nl_"+os.path.basename(f_img))
+    nl_func_img=os.path.join(func_dir, "nl_"+os.path.basename(f_img))
     command="applywarp --ref={} --in={} --out={} --warp={} --premat={}".format(template, f_img, nl_func_img, cout_anat_img, l_func_omat)
     os.system(command)
 
     # create tempalte mask
     print("       + Creating binary template mask...")
-    mask_path=os.path.join(out_dir, "anat", "mask_" + os.path.basename(template))
+    mask_path=os.path.join(anat_dir, "mask_" + os.path.basename(template))
     command="fslmaths {} -bin {}".format(template, mask_path)
     os.system(command)
 
     return(nl_anat_img, nl_func_img, cout_anat_img, l_anat_omat) # anat, func, warp, premat
 
 def applywarp(in_img, out_img, ref_img, warp_img, premat):
-    os.system("fnirt --ref={} --in={} --aff={} --iout={} --cout={} --subsamp=2,2,2,1".format(ref_img, in_img, premat, out_img, warp_img))
+    os.system(f"fnirt --ref={ref_img} --in={in_img} --aff={premat} --iout={out_img} --cout={warp_img} --subsamp=2,2,2,1")
+
     return(out_img)
 
-def segment(img, out_dir=None):
-    if out_dir is None:
-        out_dir = os.path.dirname(img)
-    seg_path = os.path.join(out_dir, "seg")
-    command="fast -n 3 -t 1 -o '{}' '{}'".format(seg_path, img)
+def segment(img, out_dir):
+    command = f"""fast -n 3 -t 1 -o '{os.path.join(out_dir, "seg")}' '{img}'"""
     os.system(command)
 
-    return(seg_path)
+    return(os.path.join(out_dir, "seg_pve_0.nii.gz"))
 
 def bin_mask(mask, thr=0.5):
     output = os.path.join(os.path.dirname(mask), "bin_"+os.path.basename(mask))
-    command="fslmaths {} -thr {} -bin {}".format(mask, thr, output)
+    command = f"fslmaths {mask} -thr {thr} -bin {output}"
     os.system(command)
-    
+
     return(output)
 
 def roi_tcourse(img, mask, save_path):
     # compute the mean time course for ROI
-    command="fslmeants -i '{}' -m '{}' -o '{}'".format(img, mask, save_path)
+    command = f"fslmeants -i '{img}' -m '{mask}' -o '{save_path}'"
     os.system(command)
-    
+
     return(save_path)
     
 def spat_smooth(img, mm, out_dir): 
     sigma=gauss_mm2sigma(mm)
     s_img=os.path.join(out_dir, "s_"+os.path.basename(img))
-    
-    command="fslmaths {} -kernel gauss {} -fmean {}".format(img, sigma, s_img)
+
+    command = f"fslmaths {img} -kernel gauss {sigma} -fmean {s_img}"
     os.system(command)
-    
+
     return(s_img)
 
 def combine_nuis(nuis1, nuis2, output):
@@ -352,14 +328,21 @@ def combine_nuis(nuis1, nuis2, output):
     
 def nuis_reg(img, _1d, out_dir, pref="nuis", poly="1"):
     clean_img=os.path.join(out_dir, pref + "_" + rm_ext(img) + ".nii.gz")
-    command="3dDeconvolve -input {} -ortvec  {} {} -polort {} -errts {}".format(img, _1d, pref, poly, clean_img)
+    matrix=os.path.join(out_dir, "Decon.xmat.1D")
+    print(f"img: {img}")
+    print(f"_1d: {_1d}")
+    print(f"out_dir: {out_dir}")
+    print(f"clean_img: {clean_img}")
+    print(f"matrix: {matrix}")
+    command = f"3dDeconvolve -input {img} -ortvec  {_1d} {pref} -polort {poly} -errts {clean_img} -x1D {matrix} -nobucket"
+
     os.system(command)
 
     return(clean_img)
 
 def file_len(fname):
     with open(fname) as f:
-        for i, l in enumerate(f):
+        for i, _ in enumerate(f):
             pass
     return i + 1
 
@@ -370,7 +353,8 @@ def meantsBOLD(img, outdir, nomoco):
     out_compound = os.path.join(outdir, "dvars_outCols.1D")
     out_outliers = os.path.join(outdir, "dvars_outliers.1D")
 
-    command="fsl_motion_outliers -i {} -o {} -s {} -p {} --dvars".format(img, out_compound, dvars_txt, dvars_png)
+    command = f"fsl_motion_outliers -i {img} -o {out_compound} -s {dvars_txt} -p {dvars_png} --dvars"
+
     if nomoco:
         command+=" --nomoco"
 
@@ -398,10 +382,11 @@ def fd_out(img, voxel_size, outdir):
     out_compound = os.path.join(outdir, "fd_outCols.1D")
     out_outliers = os.path.join(outdir, "fd_outliers.1D")
 
-    command = "fsl_motion_outliers -i {} -o {} -s {} -p {} --fd --thresh={}".format(img, out_compound, fd_txt, fd_png, thresh)
+    command = f"fsl_motion_outliers -i {img} -o {out_compound} -s {fd_txt} -p {fd_png} --fd --thresh={thresh}"
+
     os.system(command)
 
-    sleep(10)
+    sleep(5)
     if not os.path.exists(out_compound):
         nlines=file_len(fd_txt)
         fd_compound=np.zeros([nlines,1], dtype=int)
@@ -422,6 +407,7 @@ def mk_outliers(dvars, fd, out_dir, method="UNION"):
     if dvars is not None:
         dvars_mat = pd.read_csv(dvars, delimiter="\t", header=None)
     
+    outliers_mat = [0] # default if didn't run dvars or fd
     if method=="UNION":
         outliers_mat = (fd_mat + dvars_mat).astype("bool")
         outliers_mat = outliers_mat.astype("int")
@@ -441,15 +427,14 @@ def mk_outliers(dvars, fd, out_dir, method="UNION"):
 def interp_time(img, out, int_ind):
     if len(img.shape)!=4:
         raise Exception("Nifti image must have 4 dimensions.")
-    
-    
+
     # make blank image
-    int_dim = list(img.shape[0:3])
+    int_dim = list(img.shape[:3])
     int_dim.append(int_ind[1]-int_ind[0]-1)
     int_img = np.empty(int_dim)
 
     int_ind = np.setdiff1d(int_ind, [0, img.shape[3]]).tolist()
-        
+
     for row in range(img.shape[0]):
         for col in range(img.shape[1]):
             for slice in range(img.shape[2]):
@@ -520,150 +505,44 @@ def scrubbing(nifti, outliers, out_dir, interpolate=False):
     # TODO: move bellow to a new function
     new_img = nib.Nifti1Image(mat, img.affine, header=img.header)
     print("       + Saving scrubbed timeseries...")
-    scrub_path=os.path.join(out_dir, "scrub_"+rm_ext(os.path.basename(nifti))+".nii")
+    scrub_path=os.path.join(out_dir, "scrub_"+rm_ext(os.path.basename(nifti))+".nii.gz")
     nib.save(new_img, scrub_path)
     
-    return(gzip_file(scrub_path))
+    return(scrub_path)
 
 # Wrappers
 
 def wrapper_lvl2(input_file, config_file):
-    config = interpret_config(config_file)
-    input  = interpret_input(input_file)
-    nrow   = len(input.index)
+    config      = interpret_config(config_file)
+    input_data  = interpret_input(input_file)
+    nrow        = len(input_data.index)
     
     for row in range(nrow):
-        wrapper_lvl1(input.loc[row,:], config)
-        print("")
-    return(input, config)
-
-def wrapper_lvl1(input, config):
-    
-    # TODO: Fix this mess. Try to move things over to an object.
-    create_dirstruct(input["OUTPUT"])
-
-    # logging the print statements
-    # olog = os.path.join(input["OUTPUT"], "stdout.log")
-    # open(olog, "w").close()
-    # sys.stdout = open(olog, "w")
-
-    # copy files to new locations
-    cur_func=cp_rename(input["FUNC"], os.path.join(input["OUTPUT"], "func", "func"   + get_ext(input["FUNC"])))
-    cur_anat=cp_rename(input["ANAT"], os.path.join(input["OUTPUT"], "anat", "MPRage" + get_ext(input["FUNC"])))
-
-    # create empty dictionary
-    pipe_steps={}
-
-    # add voxel size
-    voxel_sz=voxel_size(cur_func, excl_time=False)
-
-    # sort step keys by value
-    sorted_steps = sorted(step_order.items(), key=operator.itemgetter(1))
-
-    for step_key in sorted_steps:
-        step_key = step_key[0]
-
-        # add baseline
-        if step_key=="BASELINE":
-            pipe_steps={"BASELINE":{"func":cur_func, "anat":cur_anat, "voxel_size":voxel_sz}}
+        ppo.Preproc_subj(input_data.loc[row,:], config, step_order)
         
-        elif step_key=="SKULLSTRIP" and config["SKULLSTRIP"]=="1": 
-            # will always run on the baseline
-            print("SKULL STRIPPING")
-            
-            step = get_step(pipe_steps, step_order, which="prev", ignore=None)
-            cur_anat = skullstrip(pipe_steps["BASELINE"]["anat"], input["OUTPUT"])
-            pipe_steps["SKULLSTRIP"] = {"anat":cur_anat, "func":pipe_steps["BASELINE"]["anat"]}
+    return
+
+def wrapper_lvl2_parallel(input_file, config_file):
+    complete_order = {}
+
+    config      = interpret_config(config_file)
+    input_data  = interpret_input(input_file)
+    nrow        = len(input_data.index)
+
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        futures = {executor.submit(ppo.Preproc_subj, input.loc[row,:], config, step_order): row for row in range(nrow)}
         
-        elif step_key=="SLICETIME" and config["SLICETIME"]=="1":
-            print("SLICETIME CORRECTION")
+        for i, f in enumerate(concurrent.futures.as_completed(futures), start=0):
+            subj = futures[f]  # deal with async nature of submit
+            print(f"subj idx: {subj}")
+            print(subj)
 
-            step = get_step(pipe_steps, step_order, which="prev", ignore=None)
-            cur_func = slicetime(cur_func, input["OUTPUT"])
-            pipe_steps["SLICETIME"] = {"anat":pipe_steps[step]["anat"], "func":cur_func}
-        
-        elif step_key=="MOTCOR" and config["MOTCOR"]=="1":
-            print("MOTION CORRECTION")
+            # count how many tasks are done (or just initialize a counter at the top to avoid looping)
+            states = [i._state for i in futures]
+            print(states)
+            print(i)
+            idx = states.count("FINISHED")
+            complete_order[subj] = idx - 1
+            print(f"completed order: {complete_order}")
 
-            step = get_step(pipe_steps, step_order, which="prev", ignore=None)
-            cur_func, _1dfile_path=motcor(pipe_steps[step]["func"], input["OUTPUT"])
-            pipe_steps["MOTCOR"] = {"anat":pipe_steps[step]["anat"], "func":cur_func, "mot_estim":_1dfile_path}
-        
-        elif step_key=="NORM" and config["NORM"]=="1":
-            print("SPATIAL NORMALIZATION")
-
-            step = get_step(pipe_steps, step_order, which="prev", ignore=None)
-            cur_anat, cur_func, nl_warp, nl_premat = spatnorm(pipe_steps[step]["func"], pipe_steps[step]["anat"], config["TEMPLATE"], input["OUTPUT"])        
-            pipe_steps["NORM"]={"anat":cur_anat, "func":cur_func, "nl_warp":nl_warp, "nl_premat":nl_premat}
-        
-        elif step_key=="NUISANCE" and config["NUISANCE"]!="0":
-            print("NUISANCE SIGNAL REGRESSION")
-            
-            step = get_step(pipe_steps, step_order, which="prev", ignore=None)
-            nuis_path=os.path.join(input["OUTPUT"], "motion", "nuisance_regressors.1D")
-
-            if config["GSR"]=="1":
-                print("       + Global Signal Regression...")
-                
-                step = get_step(pipe_steps, step_order, which="prev", ignore=None)
-                csf_mask=segment(pipe_steps[step]["anat"], os.path.join(input["OUTPUT"], "anat", "segment")) + "_pve_0.nii.gz"
-                bin_csf_mask=bin_mask(csf_mask, 0.75)
-                
-                gs_tcourse_path=os.path.join(input["OUTPUT"], "motion", "global_signal.1D")
-                gs_tcourse=roi_tcourse(pipe_steps[step]["func"], bin_csf_mask, gs_tcourse_path)
-            else:
-                gs_tcourse=None
-                bin_csf_mask=None
-
-            if config["MOTREG"]=="1":
-                print("       + Motion Parameter Regression...")
-                mot_tcourse=pipe_steps["MOTCOR"]["mot_estim"]
-            else:
-                mot_tcourse=None
-
-            if mot_tcourse is None and gs_tcourse is None:
-                raise ValueError("Must enable at least one of the following to perform nuisance regression: MOTCOR, GSR")
-            
-            nuis_tab=combine_nuis(mot_tcourse, gs_tcourse, nuis_path)
-            cur_func=nuis_reg(pipe_steps[step]["func"], nuis_tab, os.path.join(input["OUTPUT"],"func"), pref="nuis",poly=config["NUISANCE"])
-
-            pipe_steps["NUISANCE"]={"anat":pipe_steps[step]["anat"], "func":cur_func, "csf_mask":bin_csf_mask, "gsr":gs_tcourse, "mot_reg":mot_tcourse, "nuis_reg":nuis_tab}    
-
-        elif step_key=="SMOOTH" and float(config["SMOOTH"]) > 0:
-            print("SPATIAL SMOOTHING")
-
-            step = get_step(pipe_steps, step_order, which="prev", ignore=None)
-            cur_func=spat_smooth(pipe_steps[step]["func"], float(config["SMOOTH"]), os.path.join(input["OUTPUT"], "func"))
-            pipe_steps["SMOOTH"] = {"anat":pipe_steps[step]["anat"], "func":cur_func}
-        
-        elif step_key=="SCRUB" and config["SCRUB"]!="NONE":
-            print("SCRUBBING fMRI TIME SERIES")
-            step = get_step(pipe_steps, step_order, which="prev", ignore=None)
-
-            if config["SCRUB"] in ["UNION", "INTERSECT", "FD"]:
-                print("       + Frame-wise Displacement...")
-                fd_outliers = fd_out(img=pipe_steps["BASELINE"]["func"], voxel_size=sum(voxel_sz)/len(voxel_sz), outdir=os.path.join(input["OUTPUT"], "motion"))
-            else:
-                fd_outliers = None
-
-            if config["SCRUB"] in ["UNION", "INTERSECT", "DVARS"]:
-                print("       + DVARS...")
-                nomoco = config["MOTCOR"]=="1"
-                if nomoco:
-                    cur_func=pipe_steps["MOTCOR"]["func"]
-                else:
-                    cur_func=pipe_steps["BASELINE"]["func"]
-                dvar_outliers = meantsBOLD(cur_func, os.path.join(input["OUTPUT"], "motion"), nomoco)
-            else:
-                dvar_outliers = None
-
-            scrub_outliers = mk_outliers(dvar_outliers, fd_outliers, os.path.join(input["OUTPUT"], "motion"), method=config["SCRUB"])
-            scrubbed_nifti = scrubbing(pipe_steps[step]["func"], scrub_outliers, os.path.join(input["OUTPUT"], "func"), interpolate=True)
-
-            pipe_steps["SCRUB"] = {"anat":pipe_steps[step]["anat"], "func":scrubbed_nifti, "scrub_outliers":scrub_outliers, "fd":fd_outliers, "dvars":dvar_outliers, "method":config["SCRUB"]}
-
-<<<<<<< HEAD
-    return 
-=======
-    return 
->>>>>>> ad2304b5ab084de9705cd872e84542cd5d008483
+            print("")

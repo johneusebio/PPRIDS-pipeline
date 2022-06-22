@@ -1,8 +1,9 @@
 import os
+import matplotlib
 import numpy as np
 import pandas as pd
 import nibabel as nib
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt 
 from pathlib import Path
 from scipy.stats import pearsonr
 from nilearn.image import iter_img
@@ -12,6 +13,12 @@ from nilearn.decomposition import CanICA
 from nilearn.plotting import plot_stat_map
 from nilearn.input_data import NiftiMapsMasker
 from nilearn.connectome import ConnectivityMeasure
+
+x = "Hi, I'm inside mod.py!"
+
+if __name__ != "__main__":
+    print("Using non-interactive matplotlib backend: Agg")
+    matplotlib.use("Agg")  # non-interactive backend
 
 def auto_labels(nifti):
     """
@@ -32,7 +39,7 @@ def load_labels(csv_path):
     :param csv_path: path to csv file (str)
     :return: list of labels
     """
-    labels = np.genfromtxt(csv_path, delimiter=',', dtype="str")
+    labels = np.genfromtxt(csv_path, delimiter=',', dtype="str", encoding=None)
     if labels.ndim != 1:
         raise Exception("labels must be a 1-D file (i.e., single-column)")
     return list(labels)
@@ -83,13 +90,16 @@ def t_series__atlas(nifti, atlas):
     
     atlas_filename = atlas["maps"]
     
-    masker = NiftiMapsMasker(maps_img=atlas_filename, standardize=True, memory="nilearn_cache")
+    masker = NiftiMapsMasker(maps_img=atlas_filename, standardize=True)
     return masker.fit_transform(nifti)
     
 def fc_mat(nifti, atlas):
+    print("     four - one")
     roi_t = t_series__atlas(nifti, atlas)
+    print("     four - two")
     correlation_measure = ConnectivityMeasure(kind="correlation")
-    return correlation_measure.fit_transform([roi_t])[0]
+    print("     four - three")
+    return correlation_measure.fit_transform([roi_t])[0], roi_t
 
 def euc_dist(a,b):
     """
@@ -220,12 +230,12 @@ def cor_motxsignal(mot_params, nifti, mask=None, motparam_names=None):
     
     return cor_mat
 
-def ica(img, output, n_ic=4, mask=None, name=None):
+def ica(img, output, n_ic=4, mask=None, name=None, memory=None):
     if name is None:
         name = rm_ext(os.path.basename(img))
     ica_img = os.path.join(output, "IC_"+name+".nii.gz")
 
-    canica=CanICA(n_components=n_ic, memory="nilearn_cache", memory_level=2, mask=mask, random_state=0, n_jobs=1, n_init=4)
+    canica=CanICA(n_components=n_ic, smoothing_fwhm=0, memory=memory, mask=mask, random_state=0, n_jobs=1, n_init=4)
     canica.fit(img)
     canica.components_img_.to_filename(ica_img)
     
@@ -258,62 +268,85 @@ def rm_ext(filename):
 
 # main wrapper
 
-def qclvl1(nifti_pp, nifti_ref, mot_params, qc_dir, n_ic=4, mask=None, atlas=None, atlas_labels=None, atlas_rois=None):
+def qclvl1(nifti_pp, nifti_ref, mot_params, qc_dir, n_ic=4, mask=None, ica_memory=None, atlas=None, atlas_labels=None, atlas_rois=None):
     # create QC directories
     dir_metrics, dir_plots, dir_ica = qclvl1__mkdir(qc_dir)
-    
+    print("one")
+
     # load nifti files
     nifti_pp  = nib.load(nifti_pp)
     nifti_ref = nib.load(nifti_ref)
+    print("two")
     
     # load the atlas data
     atlas_data = load_atlas(atlas=atlas, labels=atlas_labels, rois=atlas_rois)
+    print("three")
     
     # load motion
     mot_estim = import_motion(mot_params)
+    print("four")
     
     # between-roi correlation matrices
-    rmat_pp  = fc_mat(nifti_pp , atlas_data)
-    rmat_ref = fc_mat(nifti_ref, atlas_data)
+    rmat_pp, roiT_pp   = fc_mat(nifti_pp , atlas_data)
+    rmat_ref, roiT_ref = fc_mat(nifti_ref, atlas_data)
+    print("five")
         
     # get data to generate connectome and r-by-distance plots
     rtab_diff, _, _, disttab = rXdist__diff(rmat_pp, rmat_ref, coords=atlas_data.region_coords)
+    print("six")
     
     # correlation between motion and global signal
     signalXmot_pp  = cor_motxsignal(mot_estim, nifti_pp , mask=mask)
     signalXmot_ref = cor_motxsignal(mot_estim, nifti_ref, mask=mask)
+    print("seven")
     
     # plotting
     
     ## plot connectome
     connectome__plot(rmat_pp, atlas_data.region_coords, os.path.join(dir_plots, "roi_connectome.jpg"))
+    print("eight")
     
     ## plot FC matrix
     fcmat__plot(rmat_pp, atlas_data.labels, os.path.join(dir_plots, "fc_matrix_preprocessed.jpg"))
     fcmat__plot(rmat_ref, atlas_data.labels, os.path.join(dir_plots, "fc_matrix_reference.jpg"))
+    print("nine")
     
     ## plot r-by-distance
     rXdist__plot(rtab_diff, disttab, os.path.join(dir_plots, "QC_rXdist.jpg"))
+    print("ten")
     
     ## plot correlation with motion parameters
     # ax1 = fig.add_subplot(1,2,1) # preprocessed image
     signalXmot__plot(signalXmot_pp)
+    print("eleven")
     plt.savefig(os.path.join(dir_plots, "motionCorrelation_preprocessed.jpg"))
+    print("twelve")
     # ax2 = plt.subplot(1,2,2) # reference image
     signalXmot__plot(signalXmot_ref)
+    print("thirteen")
     plt.savefig(os.path.join(dir_plots, "motionCorrelation_reference.jpg"))
+    print("fourteen")
     
     ## ICA
-    ica(nifti_pp , dir_ica, n_ic, mask, name="preprocessed")
-    ica(nifti_ref, dir_ica, n_ic, mask, name="reference")
+    ica(nifti_pp , dir_ica, n_ic, nib.load(mask), name="preprocessed", memory=ica_memory)
+    print("fifteen")
+    ica(nifti_ref, dir_ica, n_ic, nib.load(mask), name="reference", memory=ica_memory)
+    print("sixteen")
     
     # save the data to csv files
     np.savetxt(os.path.join(dir_metrics, "rXdist.csv"), np.transpose(np.vstack((disttab, rtab_diff))))
+    print("seventeen")
     
     np.savetxt(os.path.join(dir_metrics, "roi_FC_preprocessed.csv"), rmat_pp)
     np.savetxt(os.path.join(dir_metrics, "roi_FC_reference.csv"   ), rmat_ref)
+    print("eighteen")
+    
+    np.savetxt(os.path.join(dir_metrics, "roi_tcourse_preprocessed.csv"), roiT_pp)
+    np.savetxt(os.path.join(dir_metrics, "roi_tcourse_reference.csv"   ), roiT_ref)
+    print("ninteteen")
     
     np.savetxt(os.path.join(dir_metrics, "motionCorrelation_preprocessed.csv"), signalXmot_pp)
     np.savetxt(os.path.join(dir_metrics, "motionCorrelation_reference.csv"   ), signalXmot_ref)
-    return
+    print("twenty")
     
+    return "FINISHED QUALITY CONTROL"
