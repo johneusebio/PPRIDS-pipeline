@@ -275,36 +275,37 @@ def spatnorm(f_img, a_img, template, func_dir, anat_dir, norm_dir):
     return(nl_anat_img, nl_func_img, cout_anat_img, l_anat_omat) # anat, func, warp, premat
 
 def applywarp(in_img, out_img, ref_img, warp_img, premat):
-    os.system("fnirt --ref={} --in={} --aff={} --iout={} --cout={} --subsamp=2,2,2,1".format(ref_img, in_img, premat, out_img, warp_img))
+    os.system(f"fnirt --ref={ref_img} --in={in_img} --aff={premat} --iout={out_img} --cout={warp_img} --subsamp=2,2,2,1")
+
     return(out_img)
 
 def segment(img, out_dir):
-    command="fast -n 3 -t 1 -o '{}' '{}'".format(os.path.join(out_dir,"seg"), img)
+    command = f"""fast -n 3 -t 1 -o '{os.path.join(out_dir, "seg")}' '{img}'"""
     os.system(command)
 
     return(os.path.join(out_dir, "seg_pve_0.nii.gz"))
 
 def bin_mask(mask, thr=0.5):
     output = os.path.join(os.path.dirname(mask), "bin_"+os.path.basename(mask))
-    command="fslmaths {} -thr {} -bin {}".format(mask, thr, output)
+    command = f"fslmaths {mask} -thr {thr} -bin {output}"
     os.system(command)
-    
+
     return(output)
 
 def roi_tcourse(img, mask, save_path):
     # compute the mean time course for ROI
-    command="fslmeants -i '{}' -m '{}' -o '{}'".format(img, mask, save_path)
+    command = f"fslmeants -i '{img}' -m '{mask}' -o '{save_path}'"
     os.system(command)
-    
+
     return(save_path)
     
 def spat_smooth(img, mm, out_dir): 
     sigma=gauss_mm2sigma(mm)
     s_img=os.path.join(out_dir, "s_"+os.path.basename(img))
-    
-    command="fslmaths {} -kernel gauss {} -fmean {}".format(img, sigma, s_img)
+
+    command = f"fslmaths {img} -kernel gauss {sigma} -fmean {s_img}"
     os.system(command)
-    
+
     return(s_img)
 
 def combine_nuis(nuis1, nuis2, output):
@@ -328,12 +329,13 @@ def combine_nuis(nuis1, nuis2, output):
 def nuis_reg(img, _1d, out_dir, pref="nuis", poly="1"):
     clean_img=os.path.join(out_dir, pref + "_" + rm_ext(img) + ".nii.gz")
     matrix=os.path.join(out_dir, "Decon.xmat.1D")
-    print("img: {}".format(img))
-    print("_1d: {}".format(_1d))
-    print("out_dir: {}".format(out_dir))
-    print("clean_img: {}".format(clean_img))
-    print("matrix: {}".format(matrix))
-    command="3dDeconvolve -input {} -ortvec  {} {} -polort {} -errts {} -x1D {} -nobucket".format(img, _1d, pref, poly, clean_img, matrix)
+    print(f"img: {img}")
+    print(f"_1d: {_1d}")
+    print(f"out_dir: {out_dir}")
+    print(f"clean_img: {clean_img}")
+    print(f"matrix: {matrix}")
+    command = f"3dDeconvolve -input {img} -ortvec  {_1d} {pref} -polort {poly} -errts {clean_img} -x1D {matrix} -nobucket"
+
     os.system(command)
 
     return(clean_img)
@@ -351,7 +353,8 @@ def meantsBOLD(img, outdir, nomoco):
     out_compound = os.path.join(outdir, "dvars_outCols.1D")
     out_outliers = os.path.join(outdir, "dvars_outliers.1D")
 
-    command="fsl_motion_outliers -i {} -o {} -s {} -p {} --dvars".format(img, out_compound, dvars_txt, dvars_png)
+    command = f"fsl_motion_outliers -i {img} -o {out_compound} -s {dvars_txt} -p {dvars_png} --dvars"
+
     if nomoco:
         command+=" --nomoco"
 
@@ -379,7 +382,8 @@ def fd_out(img, voxel_size, outdir):
     out_compound = os.path.join(outdir, "fd_outCols.1D")
     out_outliers = os.path.join(outdir, "fd_outliers.1D")
 
-    command = "fsl_motion_outliers -i {} -o {} -s {} -p {} --fd --thresh={}".format(img, out_compound, fd_txt, fd_png, thresh)
+    command = f"fsl_motion_outliers -i {img} -o {out_compound} -s {fd_txt} -p {fd_png} --fd --thresh={thresh}"
+
     os.system(command)
 
     sleep(5)
@@ -509,21 +513,21 @@ def scrubbing(nifti, outliers, out_dir, interpolate=False):
 # Wrappers
 
 def wrapper_lvl2(input_file, config_file):
-    config = interpret_config(config_file)
-    input  = interpret_input(input_file)
-    nrow   = len(input.index)
+    config      = interpret_config(config_file)
+    input_data  = interpret_input(input_file)
+    nrow        = len(input_data.index)
     
     for row in range(nrow):
-        ppo.Preproc_subj(input.loc[row,:], config, step_order)
+        ppo.Preproc_subj(input_data.loc[row,:], config, step_order)
         
     return
 
 def wrapper_lvl2_parallel(input_file, config_file):
     complete_order = {}
 
-    config = interpret_config(config_file)
-    input  = interpret_input(input_file)
-    nrow   = len(input.index)
+    config      = interpret_config(config_file)
+    input_data  = interpret_input(input_file)
+    nrow        = len(input_data.index)
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(ppo.Preproc_subj, input.loc[row,:], config, step_order): row for row in range(nrow)}
