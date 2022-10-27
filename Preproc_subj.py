@@ -1,12 +1,11 @@
 
 import os
-import pathlib
 import pickle
 import shutil
+import pathlib
 import statistics as stats
 
 import preprocessing as pp
-
 
 class Preproc_subj:
     
@@ -44,9 +43,9 @@ class Preproc_subj:
     
     def create_dirstruct(self):
         dirlist=["func", "motion", "spat_norm", "quality_control", ["anat", "segment"]]
-        for dir in dirlist:
-            dir = self.join_list(dir, os.path.sep)
-            pathlib.Path(os.path.join(self.out, dir)).mkdir(parents=True, exist_ok=True)
+        for current_dir in dirlist:
+            current_dir = self.join_list(current_dir, os.path.sep)
+            pathlib.Path(os.path.join(self.out, current_dir)).mkdir(parents=True, exist_ok=True)
         return
         
     def dir_ls(self):
@@ -96,9 +95,7 @@ class Preproc_subj:
         raise Exception("Key does not exist.")
     
     def join_list(self, ls, delim="/"):
-        if isinstance(ls, list):
-            return delim.join(ls)
-        return ls
+        return delim.join(ls) if isinstance(ls, list) else ls
     
     def calc_csf_tcourse(self):
         csf_mask = pp.segment(self.anat, self.dirs["segment"])
@@ -141,13 +138,13 @@ class Preproc_subj:
         return
     
     def perform_pp(self):
-        # update this to use cases
         last_step = self.step__last()
         while last_step not in list(self.steps.keys()):
             # curr_step = self.step__current()
             next_step = self.step__next()
 
             self.pp_switcher(next_step)
+        print("last step is finished")
             
     def pp__skullstrip(self):
         print("SKULL STRIPPING")

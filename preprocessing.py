@@ -1,15 +1,14 @@
-import concurrent.futures
-import decimal
 import os
+import decimal
 import pathlib
-import pickle
-from time import sleep
-
-import nibabel as nib
 import numpy as np
 import pandas as pd
+import nibabel as nib
+from time import sleep
+import concurrent.futures
 
 import Preproc_subj as ppo
+import input_import as inm
 
 # Config Defaults
 default_config = { 
@@ -67,8 +66,8 @@ def parse_line(text, keywords, split="="):
     return(key, val)
 
 def strip_chars(text, first, last):
-    text = "{}".format(text[1:] if text.startswith(first) else text)
-    text = "{}".format(text[:-1] if text.endswith(last) else text)
+    text = f"{text[1:] if text.startswith(first) else text}"
+    text = f"{text[:-1] if text.endswith(last) else text}"
     return(text)
 
 def parse_input(text, keywords, split="=", first="[", last="]"):
@@ -117,8 +116,8 @@ def interpret_input_line(line, keywords):
     return(input_dict)
     
 def interpret_input(filepath):
-    input = open(filepath, "r")
-    lines = input.readlines()
+    input_file = open(filepath, "r")
+    lines = input_file.readlines()
 
     keywords = ["FUNC", "ANAT", "OUTPUT"]
     input_df = pd.DataFrame(index=range(len(lines)), columns=keywords)
@@ -189,41 +188,44 @@ def which(list, x=True):
     return [iter for iter, elem in enumerate(list) if elem == x]
 
 def cp_rename(filepath, newpath):
-    os.system("cp {} {}".format(filepath, newpath))
+    os.system(f"cp {filepath} {newpath}")
     return newpath
 
 # Preprocessing Functions
 
 def brainroi(img, out_dir):
-    roi_img = os.path.join(out_dir, "roi_"+os.path.basename(img))
-    os.system("robustfov -i {} -r {}".format(img, roi_img))
+    roi_img = os.path.join(out_dir, f"roi_{os.path.basename(img)}")
+    os.system(f"robustfov -i {img} -r {roi_img}")
 
     return(roi_img)
 
 def skullstrip(img, out_dir):
-    out_file = "brain_" + os.path.basename(img)
+    out_file = f"brain_{os.path.basename(img)}"
     skullstr = os.path.join(out_dir, out_file)
 
-    command="bet {} {} -R".format(img, skullstr)
+    command = f"bet {img} {skullstr} -R"
     os.system(command)
-    
+
     return(skullstr)
 
 def slicetime(img, out_dir):
     tr=getTR(img)
-    tshift_path=os.path.join(out_dir, "t_" + rm_ext(img)+".nii.gz")
-    
-    command="3dTshift -TR {}s -prefix {} {}".format(tr, tshift_path, img)
+    tshift_path = os.path.join(out_dir, f"t_{rm_ext(img)}.nii.gz")
+
+    command = f"3dTshift -TR {tr}s -prefix {tshift_path} {img}"
     os.system(command)
 
     return(tshift_path)
 
 def motcor(img, func_dir, motion_dir):
-    motcor_path =os.path.join(func_dir, "m_"+os.path.basename(img))
+    motcor_path = os.path.join(func_dir, f"m_{os.path.basename(img)}")
     _1dfile_path=os.path.join(motion_dir, "1d_"+rm_ext(os.path.basename(img))+".1D")
     norm_1dfile_path=os.path.join(motion_dir, "n1d_"+rm_ext(os.path.basename(img))+".1D")
 
-    command="3dvolreg -base 0 -prefix {} -1Dfile {} {}".format(motcor_path, _1dfile_path, img)
+    command = (
+        f"3dvolreg -base 0 -prefix {motcor_path} -1Dfile {_1dfile_path} {img}"
+    )
+
     os.system(command)
 
     mot_data = np.genfromtxt(_1dfile_path)
@@ -237,45 +239,50 @@ def spatnorm(f_img, a_img, template, func_dir, anat_dir, norm_dir):
     # lin warp func to struct
     print("       + Linear-warping functional to structural...")
     l_func_omat=os.path.join(norm_dir, "func2str.mat")
-    command="flirt -ref {} -in {} -omat {} -dof 6".format(a_img, f_img, l_func_omat)
+    command = f"flirt -ref {a_img} -in {f_img} -omat {l_func_omat} -dof 6"
     os.system(command)
-    
+
     # lin warp struct to template
     print("       + Linear-warping structural to standard template...")
     l_anat_img =os.path.join(anat_dir, "l_" + os.path.basename(a_img))
     l_anat_omat=os.path.join(norm_dir, "aff_str2std.mat")
-    command="flirt -ref {} -in {} -omat {} -out {}".format(template, a_img, l_anat_omat, l_anat_img)
+    command = f"flirt -ref {template} -in {a_img} -omat {l_anat_omat} -out {l_anat_img}"
+
     os.system(command)
-    
+
     # non-lin warp struct to template
     print("       + Non-linear-warping structural to standard template...")
     nl_anat_img  =os.path.join(anat_dir, "n" + os.path.basename(l_anat_img))
     cout_anat_img=os.path.join(anat_dir, "cout_" + os.path.basename(nl_anat_img))
-    command="fnirt --ref={} --in={} --aff={} --iout={} --cout={} --subsamp=2,2,2,1".format(template, a_img, l_anat_omat, nl_anat_img, cout_anat_img)
+    command = f"fnirt --ref={template} --in={a_img} --aff={l_anat_omat} --iout={nl_anat_img} --cout={cout_anat_img} --subsamp=2,2,2,1"
+
     os.system(command)
-    
+
     # make binary mask from non-lin warped image
     print("       + Creating binary mask from non-linearly warped image...")
     bin_nl_anat_img=os.path.join(anat_dir, "bin_" + os.path.basename(nl_anat_img))
-    command="fslmaths {} -bin {}".format(nl_anat_img, bin_nl_anat_img)
+    command = f"fslmaths {nl_anat_img} -bin {bin_nl_anat_img}"
     os.system(command)
-    
+
     # apply std warp to func data
     print("       + Applying standardized warp to functional data...")
     nl_func_img=os.path.join(func_dir, "nl_"+os.path.basename(f_img))
-    command="applywarp --ref={} --in={} --out={} --warp={} --premat={}".format(template, f_img, nl_func_img, cout_anat_img, l_func_omat)
+    command = f"applywarp --ref={template} --in={f_img} --out={nl_func_img} --warp={cout_anat_img} --premat={l_func_omat}"
+
     os.system(command)
 
     # create tempalte mask
     print("       + Creating binary template mask...")
     mask_path=os.path.join(anat_dir, "mask_" + os.path.basename(template))
-    command="fslmaths {} -bin {}".format(template, mask_path)
+    command = f"fslmaths {template} -bin {mask_path}"
     os.system(command)
 
     return(nl_anat_img, nl_func_img, cout_anat_img, l_anat_omat) # anat, func, warp, premat
 
 def applywarp(in_img, out_img, ref_img, warp_img, premat):
-    os.system(f"fnirt --ref={ref_img} --in={in_img} --aff={premat} --iout={out_img} --cout={warp_img} --subsamp=2,2,2,1")
+    os.system(
+        f"fnirt --ref={ref_img} --in={in_img} --aff={premat} --iout={out_img} --cout={warp_img} --subsamp=2,2,2,1"
+    )
 
     return(out_img)
 
@@ -300,8 +307,8 @@ def roi_tcourse(img, mask, save_path):
     return(save_path)
     
 def spat_smooth(img, mm, out_dir): 
-    sigma=gauss_mm2sigma(mm)
-    s_img=os.path.join(out_dir, "s_"+os.path.basename(img))
+    sigma = gauss_mm2sigma(mm)
+    s_img = os.path.join(out_dir, f"s_{os.path.basename(img)}")
 
     command = f"fslmaths {img} -kernel gauss {sigma} -fmean {s_img}"
     os.system(command)
@@ -327,7 +334,7 @@ def combine_nuis(nuis1, nuis2, output):
     return(output)
     
 def nuis_reg(img, _1d, out_dir, pref="nuis", poly="1"):
-    clean_img=os.path.join(out_dir, pref + "_" + rm_ext(img) + ".nii.gz")
+    clean_img = os.path.join(out_dir, f'{pref}_{rm_ext(img)}.nii.gz')
     matrix=os.path.join(out_dir, "Decon.xmat.1D")
     print(f"img: {img}")
     print(f"_1d: {_1d}")
@@ -407,7 +414,7 @@ def mk_outliers(dvars, fd, out_dir, method="UNION"):
     if dvars is not None:
         dvars_mat = pd.read_csv(dvars, delimiter="\t", header=None)
     
-    outliers_mat = [0] # default if didn't run dvars or fd
+    outliers_mat = pd.DataFrame(data=["None"]) # default if didn't run dvars or fd
     if method=="UNION":
         outliers_mat = (fd_mat + dvars_mat).astype("bool")
         outliers_mat = outliers_mat.astype("int")
@@ -483,14 +490,14 @@ def surrounding_timepoints(t_range, ind):
         sub_ind = np.unique(sub_ind, axis=0)
     return(sub_ind)
 
-def scrubbing(nifti, outliers, out_dir, interpolate=False):
+def scrubbing(nifti, outliers, out_dir, interpolate=True):
     img = nib.load(nifti)
     mat = img.get_fdata()
 
     outliers=pd.read_csv(outliers, delimiter="\t", header=None)
     outliers=outliers.values.tolist()
     outliers=which([o[0] for o in outliers], 1)
-
+    
     print("       + Removing outlier timepoints...")
     mat[:,:,:,outliers]=float("NaN")
 
@@ -512,24 +519,26 @@ def scrubbing(nifti, outliers, out_dir, interpolate=False):
 
 # Wrappers
 
-def wrapper_lvl2(input_file, config_file):
-    config      = interpret_config(config_file)
-    input_data  = interpret_input(input_file)
-    nrow        = len(input_data.index)
+# def wrapper_lvl2(input_file, config_file):
+#     config_pd = interpret_config(config_file)
+#     input_pd  = inm.interpret_input(input_file, ["FUNC", "ANAT", "OUTPUT"])
+#     # config_pd = interpret_config(config_file)
+#     # input_pd  = interpret_input(input_file)
+#     nrow   = len(input_pd.index)
     
-    for row in range(nrow):
-        ppo.Preproc_subj(input_data.loc[row,:], config, step_order)
-        
-    return
+#     for row in range(nrow):
+#         ppo.Preproc_subj(input_pd.loc[row,:], config_pd, step_order)
+#     return
 
-def wrapper_lvl2_parallel(input_file, config_file):
+def wrapper_lvl2_parallel(input_file, config_file, max_workers=None):
+    print("hello world")
     complete_order = {}
 
-    config      = interpret_config(config_file)
-    input_data  = interpret_input(input_file)
-    nrow        = len(input_data.index)
+    config = interpret_config(config_file)
+    input  = interpret_input(input_file)
+    nrow   = len(input.index)
 
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(ppo.Preproc_subj, input.loc[row,:], config, step_order): row for row in range(nrow)}
         
         for i, f in enumerate(concurrent.futures.as_completed(futures), start=0):
@@ -546,3 +555,5 @@ def wrapper_lvl2_parallel(input_file, config_file):
             print(f"completed order: {complete_order}")
 
             print("")
+    
+    return states
